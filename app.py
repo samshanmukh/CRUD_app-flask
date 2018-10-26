@@ -2,6 +2,7 @@ from flask import Flask, render_template, flash, redirect, url_for, session, req
 from flask_mysqldb import MySQL
 from wtforms import Form, StringField, TextAreaField, PasswordField, validators
 from passlib.hash import sha256_crypt
+from functools import wraps
 
 app = Flask(__name__)
 
@@ -15,14 +16,17 @@ app.config['MYSQL_CURSORCLASS'] = 'DictCursor'
 # init MySQL
 mysql = MySQL(app)
 
+# Home
 @app.route('/')
 def home():
 	return render_template('home.html')
 
+# About
 @app.route('/about')
 def about():
 	return render_template('about.html')
 
+# Articles
 from data import Articles
 Articles = Articles()
 @app.route('/articles')
@@ -33,6 +37,7 @@ def articles():
 def article(id):
 	return render_template('article.html', id = id)
 
+# User Registration Form
 class RegisterForm(Form):
 	name = StringField('Name', [validators.Length(min=1, max=50)])
 	email = StringField('Email', [validators.Length(min=6, max=50)])
@@ -43,6 +48,7 @@ class RegisterForm(Form):
 		])
 	confirm = PasswordField('Confirm Password')
 
+# User Registration
 @app.route('/register', methods=['GET', 'POST'])
 def register():
 	form = RegisterForm(request.form)
@@ -69,6 +75,68 @@ def register():
 		return redirect(url_for('home'))
 
 	return render_template('register.html', form = form)
+
+# User Login
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+	if request.method == 'POST':
+		# Get Form Fields
+		username = request.form['username']
+		password_candidate = request.form['password']
+
+		# Create a cursor
+		cur = mysql.connection.cursor()
+
+		# Get user by username
+		result = cur.execute("SELECT * FROM users WHERE username = %s", [username])
+
+		if result > 0:
+			# Get the stored hash
+			data = cur.fetchone()
+			password = data['password']
+
+			# Compare the passwords
+			if sha256_crypt.verify(password_candidate, password):
+				# password matched
+				session['logged_in'] = True
+				session['username'] = username
+
+				flash('Login successful!', 'success')
+				return redirect(url_for('dashboard'))
+			else:
+				error = 'Invalid login!'
+				return render_template('login.html', error = error)
+			# Close connection
+			cur.close()
+		else:
+			error = 'Username not found!'
+			return render_template('login.html', error = error)
+
+	return render_template('login.html')
+
+# Check if users are logged in
+def is_logged_in(f):
+	@wraps(f)
+	def wrap(*args, **kwargs):
+		if 'logged_in' in session:
+			return f(*args, **kwargs)
+		else:
+			flash('Unautherized!, Please login to your account.', 'danger')
+			return redirect(url_for('login'))
+	return wrap
+
+# User Logout
+@app.route('/logout')
+def logout():
+	session.clear()
+	flash('You are logged out!', 'success')
+	return redirect(url_for('login'))
+
+# User Dashboard
+@app.route('/dashboard')
+@is_logged_in
+def dashboard():
+	return render_template('dashboard.html')
 
 
 if __name__ == '__main__':
